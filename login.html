@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <!-- Part C: scripts, styles, and form submissions are only allowed from this website -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; style-src 'self'; form-action 'self'">
+    <title>Login</title>
+</head>
+<body>
+    <!-- POST sends the credentials in the request body, not in the URL -->
+    <form method="post" action="user_credential_check.php">
+
+        <label for="userId">Your User ID: </label>
+        <input type="text" id="userId" name="userId" size="20"
+               maxlength="50" required autocomplete="username">
+
+        <label for="password">Your Password: </label>
+        <!-- type="password" hides the characters as they are typed -->
+        <input type="password" id="password" name="password" size="20"
+               maxlength="128" required autocomplete="current-password">
+
+        <input type="submit" value="Submit">
+    </form>
+</body>
+</html>
