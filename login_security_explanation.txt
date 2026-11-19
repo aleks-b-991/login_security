@@ -1,15 +1,15 @@
 LOGIN PAGE SECURITY REVIEW
 Aleksandra Bugarcic
 
-Files in the GitHub repository:
+Files in the GitHub repository other than this one:
   login.html                  - fixed login form (Part A) with the CSP meta tag (Part C)
   user_credential_check.php   - fixed back-end login handler using PDO (Part B)
   schema.sql                  - users table that stores password hashes instead of passwords
 
 
-=====================================================================
+
 PART A - IMPROVING THE FRONT-END
-=====================================================================
+
 
 Security issues in the original form
 
@@ -95,9 +95,8 @@ New front-end code (login.html):
 The site must be served over HTTPS so the POST body is encrypted.
 
 
-=====================================================================
 PART B - IMPROVING THE BACK-END
-=====================================================================
+
 
 Security issues in the original PHP code
 
@@ -234,9 +233,9 @@ Test results (PHP 8.3, MySQL 8.0):
   Same injection on old code    -> 1 row returned (login bypassed)
 
 
-=====================================================================
+
 PART C - CONTENT-SECURITY-POLICY IN HTML
-=====================================================================
+
 
 CSP code allowing scripts, CSS, and form actions only from my website:
 
