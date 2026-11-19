@@ -1,0 +1,265 @@
+LOGIN PAGE SECURITY REVIEW
+Aleksandra Bugarcic
+
+Files in the GitHub repository:
+  login.html                  - fixed login form (Part A) with the CSP meta tag (Part C)
+  user_credential_check.php   - fixed back-end login handler using PDO (Part B)
+  schema.sql                  - users table that stores password hashes instead of passwords
+
+
+=====================================================================
+PART A - IMPROVING THE FRONT-END
+=====================================================================
+
+Security issues in the original form
+
+The original form has two main problems: it sends the login data with
+method='get', and the password field uses type='text'. Together these
+expose the user's password in several places.
+
+1) GET vs. POST
+
+GET and POST are the two most common ways a browser sends form data to a
+server. With GET, the browser adds the form fields to the end of the URL
+as a query string. After clicking Submit on the original form, the browser
+would go to something like:
+
+  user_credential_check.php?userId=student01&password=MyS3cure!Pass
+
+This is a serious problem because URLs are saved and shared in many places:
+- Browser history. Anyone who uses the same computer later, such as a
+  shared computer in a library or office, can see the password.
+- Server and proxy logs. Web servers, load balancers, and company proxies
+  usually log the full URL of every request, so the password ends up in log
+  files that many people can read and that are often kept for a long time.
+- The Referer header. Older browsers, or pages with a loose referrer
+  policy, can send the full previous URL, including the password, to
+  another site when the next page loads an image or link from it.
+- Bookmarks and screenshots. The password is visible in the address bar.
+GET is also limited in length and is meant for requests that only read
+data, like searches, and can safely be repeated or cached.
+
+With POST, the form data is sent in the body of the HTTP request instead of
+in the URL. It does not appear in the address bar, browser history, or
+normal server logs, and it is not cached. POST is meant for sending data
+that changes something on the server, such as logging in. POST by itself
+does not encrypt anything, though. Anyone watching the network can still
+read the body, so the site must also use HTTPS (TLS) to encrypt the whole
+request.
+
+2) The password input type
+
+The original password field uses type='text', so the password is shown in
+plain letters while the user types it. Anyone standing nearby, or anyone
+watching a screen share or recording, can read it ("shoulder surfing").
+Browsers may also save it in their autofill history for normal text fields.
+Using type='password' makes the browser show dots instead of characters.
+The browser and password managers then also treat the field as a password:
+they will not store it as normal autofill text, and they can offer to save
+it securely.
+
+Other improvements in the new code:
+- required and maxlength stop empty and extremely long values before they
+  are sent (the server still checks them again, since the client can be
+  bypassed).
+- autocomplete="username" and autocomplete="current-password" help
+  password managers fill in the right fields.
+- The Content-Security-Policy meta tag (see Part C) limits where scripts,
+  styles, and form submissions can come from.
+
+New front-end code (login.html):
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; style-src 'self'; form-action 'self'">
+    <title>Login</title>
+</head>
+<body>
+    <form method="post" action="user_credential_check.php">
+        <label for="userId">Your User ID: </label>
+        <input type="text" id="userId" name="userId" size="20"
+               maxlength="50" required autocomplete="username">
+
+        <label for="password">Your Password: </label>
+        <input type="password" id="password" name="password" size="20"
+               maxlength="128" required autocomplete="current-password">
+
+        <input type="submit" value="Submit">
+    </form>
+</body>
+</html>
+
+The site must be served over HTTPS so the POST body is encrypted.
+
+
+=====================================================================
+PART B - IMPROVING THE BACK-END
+=====================================================================
+
+Security issues in the original PHP code
+
+The original code has four problems: it reads the login data from $_GET,
+it builds the SQL query by pasting user input directly into a string, it
+compares the password inside the query (which means passwords are stored
+in plain text), and it does no input checking at all.
+
+1) GET vs. POST (summary)
+
+$_GET reads values from the URL, so the PHP code is only working because
+the form leaks the password into the URL. As explained in Part A, GET data
+ends up in browser history, server logs, and Referer headers, while POST
+data travels in the request body. The new code reads from $_POST and
+rejects any request that is not a POST (HTTP 405).
+
+2) SQL injection
+
+SQL injection happens when user input is combined with SQL code, so the
+database cannot tell the difference between the query the programmer wrote
+and the text the user typed. The original query is:
+
+  SELECT * FROM users WHERE id = '$uid' and pw = '$upw'
+
+If an attacker types  ' OR '1'='1  into both fields, PHP builds this query:
+
+  SELECT * FROM users WHERE id = '' OR '1'='1' and pw = '' OR '1'='1'
+
+Because '1'='1' is always true, the WHERE clause matches rows even though
+the attacker does not know any user ID or password. I tested this against
+the original code, and the query returned a user row, which means the
+attacker would be logged in. Other inputs can do more damage. Typing
+admin' --  as the user ID comments out the password check and logs in as
+admin. A UNION SELECT can read other tables, such as customer data. If the
+database allows multiple statements, an input like  '; DROP TABLE users; --
+could delete data. The impact ranges from bypassing the login to stealing
+or destroying the entire database. Escaping quotes by hand is not a
+reliable fix, because there are many edge cases (character encodings,
+numbers without quotes, and so on).
+
+3) PHP Data Objects (PDO)
+
+PDO is PHP's database access layer. It works with MySQL, PostgreSQL,
+SQLite, and other databases through the same interface. Its most important
+security feature is prepared statements. With a prepared statement, the
+SQL query is sent to the database first, with placeholders such as :id
+where the values will go. The values are sent separately afterward and are
+always treated as plain data, never as SQL code. So even if someone types
+' OR '1'='1, the database just looks for a user whose ID is literally that
+text, finds nothing, and the login fails. I tested this too: the new code
+returned "Invalid user ID or password." for the injection attempt.
+
+Setting PDO::ATTR_EMULATE_PREPARES to false makes PDO use the database's
+real prepared statements, and PDO::ERRMODE_EXCEPTION makes errors throw
+exceptions that can be caught and logged instead of being printed to the
+user. (Printing database errors would give attackers hints about the
+table structure.)
+
+4) Other fixes in the new code
+- Passwords are no longer stored or compared in plain text. The table
+  stores a hash made with password_hash(), and password_verify() checks
+  the typed password against it. If the database is ever stolen, the
+  attacker gets hashes, not real passwords.
+- Every failed login shows the same message, "Invalid user ID or
+  password," so attackers cannot find out which user IDs exist.
+- Input is checked for empty and overly long values on the server.
+- session_regenerate_id(true) gives the user a new session ID after
+  logging in, which prevents session fixation attacks.
+- Database credentials are read from environment variables instead of
+  being written in the PHP file, which keeps them out of GitHub.
+- The application should connect with a database account that only has
+  SELECT permission on the users table (least privilege).
+
+New back-end code (user_credential_check.php):
+
+<?php
+declare(strict_types=1);
+
+session_start();
+
+function login_failed(): void
+{
+    http_response_code(401);
+    exit('Invalid user ID or password.');
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    header('Allow: POST');
+    exit('Method not allowed.');
+}
+
+$uid = trim($_POST['userId'] ?? '');
+$upw = $_POST['password'] ?? '';
+
+if ($uid === '' || $upw === '' || strlen($uid) > 50 || strlen($upw) > 128) {
+    login_failed();
+}
+
+$dsn = sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4',
+    getenv('DB_HOST') ?: 'localhost',
+    getenv('DB_NAME') ?: 'webapp');
+
+try {
+    $pdo = new PDO($dsn, getenv('DB_USER') ?: '', getenv('DB_PASS') ?: '', [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_EMULATE_PREPARES   => false,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+
+    $stmt = $pdo->prepare('SELECT id, pw_hash FROM users WHERE id = :id LIMIT 1');
+    $stmt->execute([':id' => $uid]);
+    $user = $stmt->fetch();
+} catch (PDOException $e) {
+    error_log('Login database error: ' . $e->getMessage());
+    http_response_code(500);
+    exit('Something went wrong. Please try again later.');
+}
+
+if ($user && password_verify($upw, $user['pw_hash'])) {
+    session_regenerate_id(true);
+    $_SESSION['user_id'] = $user['id'];
+    header('Location: dashboard.php');
+    exit;
+}
+
+login_failed();
+
+Test results (PHP 8.3, MySQL 8.0):
+  Correct user ID and password  -> 302 redirect to dashboard.php
+  Wrong password                -> 401 "Invalid user ID or password."
+  ' OR '1'='1 in both fields    -> 401 "Invalid user ID or password."
+  GET request to the handler    -> 405 "Method not allowed."
+  Same injection on old code    -> 1 row returned (login bypassed)
+
+
+=====================================================================
+PART C - CONTENT-SECURITY-POLICY IN HTML
+=====================================================================
+
+CSP code allowing scripts, CSS, and form actions only from my website:
+
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; form-action 'self'">
+
+Explanation:
+- default-src 'self' is the fallback for every resource type that is not
+  listed (images, fonts, frames, and so on): only my own site is allowed.
+- script-src 'self' allows JavaScript only from files on my own domain.
+  Inline <script> blocks and scripts from other sites are blocked, which
+  stops most cross-site scripting (XSS) attacks.
+- style-src 'self' allows CSS only from stylesheet files on my own domain.
+  Inline styles and outside stylesheets are blocked.
+- form-action 'self' allows forms to submit only to my own site, so an
+  injected form cannot send the user's password to an attacker's server.
+  form-action does not fall back to default-src, so it has to be listed
+  separately.
+
+Note on quotes: the example in the assignment puts 'self' inside an
+attribute that also uses single quotes (content='default-src 'self''),
+which ends the attribute early and breaks the policy. The content attribute
+must use double quotes so that the single quotes around 'self' work.
+Also, the frame-ancestors directive (used against clickjacking) is ignored
+in a meta tag, so to fully block clickjacking it must be sent as an HTTP
+header from the server.
